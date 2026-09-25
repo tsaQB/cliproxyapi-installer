@@ -32,7 +32,7 @@ Write-Host "[1/5] Detected architecture: Windows ($arch)" -ForegroundColor Green
 Write-Host "[2/5] Fetching latest release from GitHub..." -ForegroundColor Cyan
 $releaseTag = "v7.3.17"
 try {
-    $releaseJson = Invoke-RestMethod -Uri "https://api.github.com/repos/router-for-me/CLIProxyAPI/releases/latest" -Headers @{ "User-Agent" = "CLIProxyAPI-Installer" }
+    $releaseJson = Invoke-RestMethod -Uri "https://api.github.com/repos/router-for-me/CLIProxyAPI/releases/latest" -Headers @{ "User-Agent" = "CLIProxyAPI-Installer" } -UseBasicParsing
     if ($releaseJson.tag_name) {
         $releaseTag = $releaseJson.tag_name
     }
@@ -48,14 +48,14 @@ $tmpExtract = "$env:TEMP\cliproxyapi_extract"
 
 # 3. Download Binary and WebUI
 Write-Host "[3/5] Downloading binary and WebUI dashboard..." -ForegroundColor Cyan
-Invoke-WebRequest -Uri $zipUrl -OutFile $tmpZip
+Invoke-WebRequest -Uri $zipUrl -OutFile $tmpZip -UseBasicParsing
 if (Test-Path $tmpExtract) { Remove-Item -Recurse -Force $tmpExtract }
 Expand-Archive -Path $tmpZip -DestinationPath $tmpExtract -Force
 Move-Item -Force "$tmpExtract\cli-proxy-api.exe" "$binDir\cli-proxy-api.exe"
 Remove-Item -Force $tmpZip
 Remove-Item -Recurse -Force $tmpExtract
 
-Invoke-WebRequest -Uri $dashboardUrl -OutFile "$staticDir\management.html"
+Invoke-WebRequest -Uri $dashboardUrl -OutFile "$staticDir\management.html" -UseBasicParsing
 Write-Host "✔ Binary and WebUI deployed" -ForegroundColor Green
 
 # 4. Configuration Setup

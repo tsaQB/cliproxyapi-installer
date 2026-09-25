@@ -80,6 +80,7 @@ if [ "$EUID_VAL" -eq 0 ]; then
     CONFIG_DIR="/etc/cliproxyapi"
     LOG_DIR="/var/log/cliproxyapi"
     SYSTEMD_DIR="/etc/systemd/system"
+    TARGET_WANTED="multi-user.target"
     printf "      %b• Running with root privileges (System-wide install)%b\n" "${C_DIM}" "${C_RESET}"
 else
     IS_ROOT=0
@@ -88,6 +89,7 @@ else
     CONFIG_DIR="${HOME}/.cliproxyapi"
     LOG_DIR="${HOME}/.cliproxyapi/logs"
     SYSTEMD_DIR="${HOME}/.config/systemd/user"
+    TARGET_WANTED="default.target"
     printf "      %b• Running in user space (Local install: %s)%b\n" "${C_DIM}" "${DATA_DIR}" "${C_RESET}"
 fi
 
@@ -136,7 +138,11 @@ printf "      %b✔ Directory structure ready%b\n\n" "${C_GREEN}" "${C_RESET}"
 # 4. Fetch and Deploy Upstream Binary & WebUI Dashboard
 printf "%b[4/6]%b %b🌐 Fetching official upstream binary & dashboard...%b\n" "${C_CYAN}" "${C_RESET}" "${C_BOLD}" "${C_RESET}"
 
-LATEST_TAG=$(curl -sL https://api.github.com/repos/router-for-me/CLIProxyAPI/releases/latest | grep '"tag_name":' | head -n 1 | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/' || true)
+# Rate-limit-free tag resolution via release redirect, fallback to GitHub API
+LATEST_TAG=$(curl -sSI https://github.com/router-for-me/CLIProxyAPI/releases/latest 2>/dev/null | grep -i "^location:" | head -n 1 | sed -E 's/.*\/tag\/([^\r\n]+).*/\1/' || true)
+if [ -z "$LATEST_TAG" ]; then
+    LATEST_TAG=$(curl -sL https://api.github.com/repos/router-for-me/CLIProxyAPI/releases/latest 2>/dev/null | grep '"tag_name":' | head -n 1 | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/' || true)
+fi
 if [ -z "$LATEST_TAG" ]; then
     LATEST_TAG="v7.3.17"
 fi
@@ -243,11 +249,10 @@ StandardOutput=journal
 StandardError=journal
 
 [Install]
-WantedBy=default.target
+WantedBy=${TARGET_WANTED}
 EOF
 
     if [ "$IS_ROOT" -eq 1 ]; then
-        sed -i 's/WantedBy=default.target/WantedBy=multi-user.target/' "${SYSTEMD_SERVICE_FILE}"
         systemctl daemon-reload
         systemctl enable --now cliproxyapi >/dev/null 2>&1 || true
         printf "      %b✔ Systemd system service enabled and started%b\n" "${C_GREEN}" "${C_RESET}"
@@ -259,8 +264,9 @@ EOF
 fi
 
 # Write CLI management wrapper
+SHELL_BIN=$(command -v bash 2>/dev/null || command -v sh 2>/dev/null || echo "/bin/sh")
 cat << EOF > "${WRAPPER_PATH}"
-#!/usr/bin/env bash
+#!${SHELL_BIN}
 BIN="${BIN_PATH}"
 CONFIG="${CONFIG_FILE}"
 LOG_FILE="${LOG_DIR}/service.log"
@@ -279,61 +285,60 @@ sys_cmd() {
 
 start_proc() {
   if [ "\$HAS_SYSTEMD" -eq 1 ]; then
-    sys_cmd start
-    echo "🟢 Service started via systemd."
-  else
-    if pgrep -f "\$BIN" >/dev/null 2>&1; then
-      echo "⚠️  CLIProxyAPI is already running (PID: \$(pgrep -f "\$BIN" | head -n 1))."
+    if sys_cmd start 2>/dev/null; then
+      echo "🟢 Service started via systemd."
       return 0
     fi
-    echo "🚀 Starting CLIProxyAPI background daemon..."
-    setsid "\$BIN" -config "\$CONFIG" < /dev/null > "\$LOG_FILE" 2>&1 &
-    sleep 1
-    if pgrep -f "\$BIN" >/dev/null 2>&1; then
-      echo "✅ CLIProxyAPI is running (PID: \$(pgrep -f "\$BIN" | head -n 1))"
-    else
-      echo "❌ Failed to start. Check logs: \$LOG_FILE"
-    fi
+    echo "⚠️  Systemd start failed, falling back to background daemon..."
+  fi
+
+  if pgrep -f "\$BIN" >/dev/null 2>&1; then
+    echo "⚠️  CLIProxyAPI is already running (PID: \$(pgrep -f "\$BIN" | head -n 1))."
+    return 0
+  fi
+  echo "🚀 Starting CLIProxyAPI background daemon..."
+  setsid "\$BIN" -config "\$CONFIG" < /dev/null > "\$LOG_FILE" 2>&1 &
+  sleep 1
+  if pgrep -f "\$BIN" >/dev/null 2>&1; then
+    echo "✅ CLIProxyAPI is running (PID: \$(pgrep -f "\$BIN" | head -n 1))"
+  else
+    echo "❌ Failed to start. Check logs: \$LOG_FILE"
+    return 1
   fi
 }
 
 stop_proc() {
   if [ "\$HAS_SYSTEMD" -eq 1 ]; then
-    sys_cmd stop
-    echo "🛑 Service stopped via systemd."
+    sys_cmd stop 2>/dev/null || true
+  fi
+  if pgrep -f "\$BIN" >/dev/null 2>&1; then
+    pkill -f "\$BIN" || true
+    echo "🛑 CLIProxyAPI daemon stopped."
   else
-    if pgrep -f "\$BIN" >/dev/null 2>&1; then
-      pkill -f "\$BIN"
-      echo "🛑 CLIProxyAPI daemon stopped."
-    else
-      echo "ℹ️  CLIProxyAPI is not running."
-    fi
+    echo "ℹ️  CLIProxyAPI is not running."
   fi
 }
 
 restart_proc() {
-  if [ "\$HAS_SYSTEMD" -eq 1 ]; then
-    sys_cmd restart
-    echo "🔄 Service restarted via systemd."
-  else
-    stop_proc
-    sleep 1
-    start_proc
-  fi
+  stop_proc
+  sleep 1
+  start_proc
 }
 
 status_proc() {
   if [ "\$HAS_SYSTEMD" -eq 1 ]; then
-    sys_cmd status --no-pager
-  else
-    if pgrep -f "\$BIN" >/dev/null 2>&1; then
-      PID=\$(pgrep -f "\$BIN" | head -n 1)
-      echo "🟢 CLIProxyAPI is running (PID: \$PID)"
-      echo "🔗 Server URL : http://127.0.0.1:8317"
-      echo "🌐 Dashboard  : http://127.0.0.1:8317/management.html"
-    else
-      echo "🔴 CLIProxyAPI is not running."
+    if sys_cmd status --no-pager 2>/dev/null; then
+      return 0
     fi
+  fi
+
+  if pgrep -f "\$BIN" >/dev/null 2>&1; then
+    PID=\$(pgrep -f "\$BIN" | head -n 1)
+    echo "🟢 CLIProxyAPI is running (PID: \$PID)"
+    echo "🔗 Server URL : http://127.0.0.1:8317"
+    echo "🌐 Dashboard  : http://127.0.0.1:8317/management.html"
+  else
+    echo "🔴 CLIProxyAPI is not running."
   fi
 }
 
@@ -341,12 +346,14 @@ logs_proc() {
   if [ "\$HAS_SYSTEMD" -eq 1 ]; then
     if [ "\$IS_ROOT" -eq 1 ]; then
       journalctl -u cliproxyapi -f
+      return 0
     else
-      journalctl --user -u cliproxyapi -f
+      if journalctl --user -u cliproxyapi -f 2>/dev/null; then
+        return 0
+      fi
     fi
-  else
-    tail -n 50 -f "\$LOG_FILE"
   fi
+  tail -n 50 -f "\$LOG_FILE"
 }
 
 case "\$1" in
@@ -414,6 +421,11 @@ case ":$PATH:" in
 esac
 
 # Final Summary Card
+DISPLAY_CONFIG="${CONFIG_FILE}"
+case "$DISPLAY_CONFIG" in
+    "$HOME"/*) DISPLAY_CONFIG="~${DISPLAY_CONFIG#$HOME}" ;;
+esac
+
 printf "%b────────────────────────────────────────────────────%b\n" "${C_GREEN}" "${C_RESET}"
 printf "  %b🎉 Installation Complete!%b\n" "${C_BOLD}" "${C_RESET}"
 printf "%b────────────────────────────────────────────────────%b\n\n" "${C_GREEN}" "${C_RESET}"
@@ -421,7 +433,7 @@ printf "%b───────────────────────�
 printf "  %b• WebUI Dashboard%b : %bhttp://127.0.0.1:8317/management.html%b\n" "${C_BOLD}" "${C_RESET}" "${C_CYAN}" "${C_RESET}"
 printf "  %b• Default Secret%b  : %b%s%b\n" "${C_BOLD}" "${C_RESET}" "${C_YELLOW}" "${ADMIN_KEY}" "${C_RESET}"
 printf "  %b• Client API Key%b  : %b%s%b\n" "${C_BOLD}" "${C_RESET}" "${C_WHITE}" "${RANDOM_KEY}" "${C_RESET}"
-printf "  %b• Configuration%b   : %b%s%b\n\n" "${C_BOLD}" "${C_RESET}" "${C_DIM}" "${CONFIG_FILE}" "${C_RESET}"
+printf "  %b• Configuration%b   : %b%s%b\n\n" "${C_BOLD}" "${C_RESET}" "${C_DIM}" "${DISPLAY_CONFIG}" "${C_RESET}"
 
 printf "  %bQuick Start Commands:%b\n" "${C_BOLD}" "${C_RESET}"
 printf "    %b$ cliproxyapi start%b   Start service in background\n" "${C_CYAN}" "${C_RESET}"
