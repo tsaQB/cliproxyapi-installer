@@ -197,7 +197,7 @@ if not errorlevel 1 (
     exit /b 0
 )
 echo [*] Starting CLIProxyAPI background daemon...
-powershell -NoProfile -WindowStyle Hidden -Command "Start-Process -FilePath '%BIN%' -ArgumentList '-config \"%CONFIG%\"' -WorkingDirectory '%BASE_DIR%' -RedirectStandardOutput '%LOG_FILE%' -RedirectStandardError '%LOG_FILE%'"
+powershell -NoProfile -WindowStyle Hidden -Command "Start-Process -FilePath '%BIN%' -ArgumentList '-config', '%CONFIG%' -WorkingDirectory '%BASE_DIR%' -RedirectStandardOutput '%LOG_FILE%' -RedirectStandardError '%LOG_FILE%'"
 timeout /t 1 /nobreak >NUL
 tasklist /fi "imagename eq cli-proxy-api.exe" 2>NUL | find /i "cli-proxy-api.exe" >NUL
 if not errorlevel 1 (
@@ -281,7 +281,7 @@ Write-Host "      ✔ Command 'cliproxyapi' registered in PATH`n" -ForegroundCol
 # Resume process if it was running before upgrade
 if ($wasRunning) {
     Write-Host "      🔄 Resuming CLIProxyAPI in background..." -ForegroundColor Cyan
-    Start-Process -FilePath "$binDir\cli-proxy-api.exe" -ArgumentList "-config `"$configFile`"" -WorkingDirectory $baseDir -RedirectStandardOutput "$logDir\service.log" -RedirectStandardError "$logDir\service.log" -WindowStyle Hidden
+    Start-Process -FilePath "$binDir\cli-proxy-api.exe" -ArgumentList "-config", $configFile -WorkingDirectory $baseDir -RedirectStandardOutput "$logDir\service.log" -RedirectStandardError "$logDir\service.log" -WindowStyle Hidden
     Start-Sleep -Seconds 1
     if (Get-Process -Name "cli-proxy-api" -ErrorAction SilentlyContinue) {
         Write-Host "      ✔ Daemon resumed successfully`n" -ForegroundColor Green

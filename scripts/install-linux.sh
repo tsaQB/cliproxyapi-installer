@@ -181,7 +181,7 @@ printf "%b[5/6]%b %b⚙️  Configuring service profile...%b\n" "${C_CYAN}" "${C
 if [ -f "${CONFIG_FILE}" ]; then
     printf "      %b✔ Existing configuration preserved: %s%b\n\n" "${C_GREEN}" "${CONFIG_FILE}" "${C_RESET}"
     RANDOM_KEY=$(grep -E '^[[:space:]]*-[[:space:]]*"?[a-zA-Z0-9]+' "${CONFIG_FILE}" 2>/dev/null | head -n 1 | tr -d ' "-' || echo "configured")
-    ADMIN_KEY=$(grep -E '^[[:space:]]*secret-key:[[:space:]]*' "${CONFIG_FILE}" 2>/dev/null | head -n 1 | awk '{print $2}' | tr -d '"' || echo "admin123")
+    ADMIN_KEY=$(grep -E '^[[:space:]]*secret-key:[[:space:]]*' "${CONFIG_FILE}" 2>/dev/null | head -n 1 | awk '{print $2}' | tr -d ' "\047' || echo "admin123")
 else
     RANDOM_KEY=$(dd if=/dev/urandom bs=16 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')
     ADMIN_KEY="admin123"
@@ -374,7 +374,7 @@ case "\$1" in
     ;;
   update|upgrade)
     echo "🌐 Updating CLIProxyAPI via official installer..."
-    curl -fsSL https://raw.githubusercontent.com/tsaQB/cliproxyapi-installer/main/scripts/install-linux.sh | bash
+    curl -fsSL https://raw.githubusercontent.com/tsaQB/cliproxyapi-installer/main/scripts/install-linux.sh | ${SHELL_BIN}
     ;;
   run)
     shift
