@@ -8,13 +8,15 @@
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd || true)"
+SH_BIN=$(command -v bash 2>/dev/null || command -v sh 2>/dev/null || echo "sh")
 
 # 1. Android (Termux Native)
 if [ -n "${TERMUX_VERSION:-}" ] || [ -d "/data/data/com.termux" ]; then
     if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/scripts/install-termux.sh" ]; then
         exec "$SCRIPT_DIR/scripts/install-termux.sh" "$@"
     fi
-    exec curl -fsSL https://raw.githubusercontent.com/tsaQB/cliproxyapi-installer/main/scripts/install-termux.sh | bash -s -- "$@"
+    curl -fsSL https://raw.githubusercontent.com/tsaQB/cliproxyapi-android/main/install.sh | "$SH_BIN" -s -- "$@"
+    exit $?
 fi
 
 # 2. Linux Native (Debian, Ubuntu, Arch, Fedora, RHEL, Alpine, etc.)
@@ -23,7 +25,8 @@ if [ "$OS" = "Linux" ]; then
     if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/scripts/install-linux.sh" ]; then
         exec "$SCRIPT_DIR/scripts/install-linux.sh" "$@"
     fi
-    exec curl -fsSL https://raw.githubusercontent.com/tsaQB/cliproxyapi-installer/main/scripts/install-linux.sh | bash -s -- "$@"
+    curl -fsSL https://raw.githubusercontent.com/tsaQB/cliproxyapi-installer/main/scripts/install-linux.sh | "$SH_BIN" -s -- "$@"
+    exit $?
 fi
 
 # 3. macOS (Darwin)

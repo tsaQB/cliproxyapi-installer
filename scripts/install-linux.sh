@@ -400,13 +400,20 @@ EOF
 chmod 755 "${WRAPPER_PATH}"
 printf "      %b✔ Command 'cliproxyapi' registered at %s%b\n\n" "${C_GREEN}" "${WRAPPER_PATH}" "${C_RESET}"
 
-# Resume process if without systemd
-if [ "$HAS_SYSTEMD" -eq 0 ] && [ "$WAS_RUNNING" -eq 1 ]; then
-    printf "      %b🔄 Resuming CLIProxyAPI background daemon...%b\n" "${C_CYAN}" "${C_RESET}"
+# Launch or resume background daemon if without systemd
+if [ "$HAS_SYSTEMD" -eq 0 ]; then
+    export MANAGEMENT_STATIC_PATH="${STATIC_DIR}"
+    if [ "$WAS_RUNNING" -eq 1 ]; then
+        printf "      %b🔄 Resuming CLIProxyAPI background daemon...%b\n" "${C_CYAN}" "${C_RESET}"
+    else
+        printf "      %b🚀 Launching CLIProxyAPI background daemon...%b\n" "${C_CYAN}" "${C_RESET}"
+    fi
     setsid "${BIN_PATH}" -config "${CONFIG_FILE}" < /dev/null > "${LOG_DIR}/service.log" 2>&1 &
     sleep 1
     if pgrep -f "${BIN_PATH}" >/dev/null 2>&1; then
-        printf "      %b✔ Daemon resumed successfully%b\n\n" "${C_GREEN}" "${C_RESET}"
+        printf "      %b✔ Daemon active (PID: %s)%b\n\n" "${C_GREEN}" "$(pgrep -f "${BIN_PATH}" | head -n 1)" "${C_RESET}"
+    else
+        printf "      %b⚠️  Could not start background daemon. Check logs: %s/service.log%b\n\n" "${C_YELLOW}" "${LOG_DIR}" "${C_RESET}"
     fi
 fi
 
@@ -423,7 +430,7 @@ esac
 # Final Summary Card
 DISPLAY_CONFIG="${CONFIG_FILE}"
 case "$DISPLAY_CONFIG" in
-    "$HOME"/*) DISPLAY_CONFIG="~${DISPLAY_CONFIG#$HOME}" ;;
+    "$HOME"/*) DISPLAY_CONFIG="~${DISPLAY_CONFIG#"$HOME"}" ;;
 esac
 
 printf "%b────────────────────────────────────────────────────%b\n" "${C_GREEN}" "${C_RESET}"
@@ -431,7 +438,7 @@ printf "  %b🎉 Installation Complete!%b\n" "${C_BOLD}" "${C_RESET}"
 printf "%b────────────────────────────────────────────────────%b\n\n" "${C_GREEN}" "${C_RESET}"
 
 printf "  %b• WebUI Dashboard%b : %bhttp://127.0.0.1:8317/management.html%b\n" "${C_BOLD}" "${C_RESET}" "${C_CYAN}" "${C_RESET}"
-printf "  %b• Default Secret%b  : %b%s%b\n" "${C_BOLD}" "${C_RESET}" "${C_YELLOW}" "${ADMIN_KEY}" "${C_RESET}"
+printf "  %b• Secret Key%b      : %b%s%b\n" "${C_BOLD}" "${C_RESET}" "${C_YELLOW}" "${ADMIN_KEY}" "${C_RESET}"
 printf "  %b• Client API Key%b  : %b%s%b\n" "${C_BOLD}" "${C_RESET}" "${C_WHITE}" "${RANDOM_KEY}" "${C_RESET}"
 printf "  %b• Configuration%b   : %b%s%b\n\n" "${C_BOLD}" "${C_RESET}" "${C_DIM}" "${DISPLAY_CONFIG}" "${C_RESET}"
 

@@ -57,22 +57,31 @@ Write-Host "      ✔ Directory layout ready at $baseDir`n" -ForegroundColor Gre
 Write-Host "[3/6] 🌐 Resolving latest upstream release..." -ForegroundColor Cyan
 $releaseTag = "v7.3.17"
 try {
-    $req = [System.Net.WebRequest]::Create("https://github.com/router-for-me/CLIProxyAPI/releases/latest")
-    $req.AllowAutoRedirect = $false
-    $resp = $req.GetResponse()
-    $location = $resp.GetResponseHeader("Location")
-    $resp.Close()
+    $resp = Invoke-WebRequest -Uri "https://github.com/router-for-me/CLIProxyAPI/releases/latest" -MaximumRedirection 0 -UseBasicParsing -ErrorAction Stop
+    $location = $resp.Headers["Location"]
+    if ($location -is [array]) { $location = $location[0] }
     if ($location -match '/tag/([^/]+)$') {
         $releaseTag = $matches[1]
     }
 } catch {
-    try {
-        $releaseJson = Invoke-RestMethod -Uri "https://api.github.com/repos/router-for-me/CLIProxyAPI/releases/latest" -Headers @{ "User-Agent" = "CLIProxyAPI-Installer" } -UseBasicParsing
-        if ($releaseJson.tag_name) {
-            $releaseTag = $releaseJson.tag_name
+    $location = $null
+    if ($_.Exception.Response) {
+        try {
+            $location = $_.Exception.Response.Headers["Location"]
+            if ($location -is [array]) { $location = $location[0] }
+        } catch {}
+    }
+    if ($location -and $location -match '/tag/([^/]+)$') {
+        $releaseTag = $matches[1]
+    } else {
+        try {
+            $releaseJson = Invoke-RestMethod -Uri "https://api.github.com/repos/router-for-me/CLIProxyAPI/releases/latest" -Headers @{ "User-Agent" = "CLIProxyAPI-Installer" } -UseBasicParsing
+            if ($releaseJson.tag_name) {
+                $releaseTag = $releaseJson.tag_name
+            }
+        } catch {
+            # Fallback to default release tag
         }
-    } catch {
-        # Fallback to default release tag
     }
 }
 $cleanTag = $releaseTag.TrimStart('v')
@@ -150,6 +159,10 @@ oauth-model-alias:
     Write-Host "      ✔ Config created (Secret: $adminKey)`n" -ForegroundColor Green
 } else {
     Write-Host "      ✔ Existing configuration preserved: $configFile`n" -ForegroundColor Green
+    $existingSecret = (Get-Content -Path $configFile -ErrorAction SilentlyContinue | Select-String -Pattern '^\s*secret-key:\s*"?([^"\r\n]+)"?' | ForEach-Object { $_.Matches.Groups[1].Value.Trim() } | Select-Object -First 1)
+    if ($existingSecret) {
+        $adminKey = $existingSecret
+    }
 }
 
 # 6. Command Launcher and PATH Registration
@@ -232,8 +245,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubus
 exit /b 0
 
 :run
-shift
-"%BIN%" -config "%CONFIG%" %1 %2 %3 %4 %5 %6 %7 %8 %9
+set "ARGS=%*"
+set "ARGS=%ARGS:*run=%"
+"%BIN%" -config "%CONFIG%" %ARGS%
 exit /b %errorlevel%
 
 :passthrough
@@ -260,19 +274,25 @@ if ($userPath -notlike "*$binDir*") {
     [Environment]::SetEnvironmentVariable("Path", "$binDir;$userPath", "User")
     $env:Path = "$binDir;$env:Path"
 }
+[Environment]::SetEnvironmentVariable("MANAGEMENT_STATIC_PATH", $staticDir, "User")
+$env:MANAGEMENT_STATIC_PATH = $staticDir
 Write-Host "      ✔ Command 'cliproxyapi' registered in PATH`n" -ForegroundColor Green
 
 # Resume process if it was running before upgrade
 if ($wasRunning) {
     Write-Host "      🔄 Resuming CLIProxyAPI in background..." -ForegroundColor Cyan
-    Start-Process -FilePath "$binDir\cli-proxy-api.exe" -ArgumentList "-config `"$configFile`"" -WorkingDirectory $baseDir -WindowStyle Hidden
+    Start-Process -FilePath "$binDir\cli-proxy-api.exe" -ArgumentList "-config `"$configFile`"" -WorkingDirectory $baseDir -RedirectStandardOutput "$logDir\service.log" -RedirectStandardError "$logDir\service.log" -WindowStyle Hidden
+    Start-Sleep -Seconds 1
+    if (Get-Process -Name "cli-proxy-api" -ErrorAction SilentlyContinue) {
+        Write-Host "      ✔ Daemon resumed successfully`n" -ForegroundColor Green
+    }
 }
 
 Write-Host "────────────────────────────────────────────────────" -ForegroundColor Green
 Write-Host "  🎉 Installation Complete!" -ForegroundColor Green
 Write-Host "────────────────────────────────────────────────────`n" -ForegroundColor Green
 Write-Host "  • WebUI Dashboard : http://127.0.0.1:8317/management.html" -ForegroundColor Cyan
-Write-Host "  • Default Secret  : $adminKey" -ForegroundColor Yellow
+Write-Host "  • Secret Key      : $adminKey" -ForegroundColor Yellow
 Write-Host "  • Configuration   : $configFile`n" -ForegroundColor DarkGray
 Write-Host "  Quick Start Commands:" -ForegroundColor White
 Write-Host "    $ cliproxyapi start   Start service in background" -ForegroundColor Cyan
