@@ -1,13 +1,38 @@
 # ==============================================================================
-# CLIProxyAPI Windows Installer (PowerShell)
+# CLIProxyAPI Windows Native Installer (PowerShell)
+# Architecture: x64 (amd64) and ARM64 (aarch64)
 # Repository: https://github.com/tsaQB/cliproxyapi-installer
 # ==============================================================================
 $ErrorActionPreference = "Stop"
 
-Write-Host "====================================================" -ForegroundColor Cyan
-Write-Host "     CLIProxyAPI Windows Installer (Preview)        " -ForegroundColor Cyan
-Write-Host "====================================================" -ForegroundColor Cyan
+# Force TLS 1.2+ for older PowerShell 5.1
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
 
+Clear-Host -ErrorAction SilentlyContinue
+
+Write-Host "____ _     ___ ____                      _    ____ ___ " -ForegroundColor Cyan
+Write-Host "/ ___| |   |_ _|  _ \ _ __ _____  ___   _/ \  |  _ \_ _|" -ForegroundColor Cyan
+Write-Host "| |   | |    | || |_) | '__/ _ \ \/ / | | / _ \ | |_) | | " -ForegroundColor Cyan
+Write-Host "| |___| |___ | ||  __/| | | (_) >  <| |_| / ___ \|  __/| | " -ForegroundColor Cyan
+Write-Host "\____|_____|___|_|   |_|  \___/_/\_\\__, /_/   \_\_|  |___|" -ForegroundColor Cyan
+Write-Host "                                    |___/                  " -ForegroundColor Cyan
+Write-Host "            Windows Native Service Installer               " -ForegroundColor DarkGray
+Write-Host "                  Maintained by tsaQB                      `n" -ForegroundColor Magenta
+
+# 1. Architecture Validation
+Write-Host "[1/6] 🔍 Checking platform architecture..." -ForegroundColor Cyan
+$arch = "amd64"
+try {
+    if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq [System.Runtime.InteropServices.Architecture]::Arm64) {
+        $arch = "aarch64"
+    }
+} catch {
+    $arch = "amd64"
+}
+Write-Host "      ✔ Compatible Windows architecture: $arch`n" -ForegroundColor Green
+
+# 2. Directory Layout Setup
+Write-Host "[2/6] 📁 Configuring workspace directories..." -ForegroundColor Cyan
 $baseDir = "$env:USERPROFILE\.cliproxyapi"
 $binDir = "$baseDir\bin"
 $staticDir = "$baseDir\static"
@@ -17,49 +42,66 @@ $configFile = "$baseDir\config.yaml"
 
 New-Item -ItemType Directory -Force -Path $binDir, $staticDir, $authDir, $logDir | Out-Null
 
-# 1. Detect Architecture
-$arch = "amd64"
-try {
-    if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq [System.Runtime.InteropServices.Architecture]::Arm64) {
-        $arch = "aarch64"
-    }
-} catch {
-    $arch = "amd64"
+# Handle running process before upgrade to avoid Windows file-locking errors
+$wasRunning = $false
+$runningProc = Get-Process -Name "cli-proxy-api" -ErrorAction SilentlyContinue
+if ($runningProc) {
+    $wasRunning = $true
+    Write-Host "      🛑 Stopping active CLIProxyAPI process for upgrade..." -ForegroundColor Yellow
+    Stop-Process -Name "cli-proxy-api" -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 1
 }
-Write-Host "[1/5] Detected architecture: Windows ($arch)" -ForegroundColor Green
+Write-Host "      ✔ Directory layout ready at $baseDir`n" -ForegroundColor Green
 
-# 2. Query Latest Release
-Write-Host "[2/5] Fetching latest release from GitHub..." -ForegroundColor Cyan
+# 3. Query Latest Release Tag (Rate-limit-free redirect resolution)
+Write-Host "[3/6] 🌐 Resolving latest upstream release..." -ForegroundColor Cyan
 $releaseTag = "v7.3.17"
 try {
-    $releaseJson = Invoke-RestMethod -Uri "https://api.github.com/repos/router-for-me/CLIProxyAPI/releases/latest" -Headers @{ "User-Agent" = "CLIProxyAPI-Installer" } -UseBasicParsing
-    if ($releaseJson.tag_name) {
-        $releaseTag = $releaseJson.tag_name
+    $req = [System.Net.WebRequest]::Create("https://github.com/router-for-me/CLIProxyAPI/releases/latest")
+    $req.AllowAutoRedirect = $false
+    $resp = $req.GetResponse()
+    $location = $resp.GetResponseHeader("Location")
+    $resp.Close()
+    if ($location -match '/tag/([^/]+)$') {
+        $releaseTag = $matches[1]
     }
 } catch {
-    Write-Host "Using default release tag: $releaseTag" -ForegroundColor Yellow
+    try {
+        $releaseJson = Invoke-RestMethod -Uri "https://api.github.com/repos/router-for-me/CLIProxyAPI/releases/latest" -Headers @{ "User-Agent" = "CLIProxyAPI-Installer" } -UseBasicParsing
+        if ($releaseJson.tag_name) {
+            $releaseTag = $releaseJson.tag_name
+        }
+    } catch {
+        # Fallback to default release tag
+    }
 }
 $cleanTag = $releaseTag.TrimStart('v')
+Write-Host "      • Upstream release: $releaseTag" -ForegroundColor DarkGray
 
+# 4. Download Binary & WebUI Dashboard
+Write-Host "[4/6] ⬇ Downloading official binary bundle and WebUI..." -ForegroundColor Cyan
 $zipUrl = "https://github.com/router-for-me/CLIProxyAPI/releases/download/$releaseTag/CLIProxyAPI_${cleanTag}_windows_${arch}.zip"
 $dashboardUrl = "https://github.com/router-for-me/Cli-Proxy-API-Management-Center/releases/latest/download/management.html"
 $tmpZip = "$env:TEMP\cliproxyapi_windows.zip"
 $tmpExtract = "$env:TEMP\cliproxyapi_extract"
 
-# 3. Download Binary and WebUI
-Write-Host "[3/5] Downloading binary and WebUI dashboard..." -ForegroundColor Cyan
 Invoke-WebRequest -Uri $zipUrl -OutFile $tmpZip -UseBasicParsing
 if (Test-Path $tmpExtract) { Remove-Item -Recurse -Force $tmpExtract }
 Expand-Archive -Path $tmpZip -DestinationPath $tmpExtract -Force
 Move-Item -Force "$tmpExtract\cli-proxy-api.exe" "$binDir\cli-proxy-api.exe"
-Remove-Item -Force $tmpZip
-Remove-Item -Recurse -Force $tmpExtract
+Remove-Item -Force $tmpZip -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force $tmpExtract -ErrorAction SilentlyContinue
 
-Invoke-WebRequest -Uri $dashboardUrl -OutFile "$staticDir\management.html" -UseBasicParsing
-Write-Host "✔ Binary and WebUI deployed" -ForegroundColor Green
+try {
+    Invoke-WebRequest -Uri $dashboardUrl -OutFile "$staticDir\management.html" -UseBasicParsing
+} catch {
+    Set-Content -Path "$staticDir\management.html" -Value "<!DOCTYPE html><html><head><title>CLIProxyAPI</title></head><body><h1>CLIProxyAPI Dashboard</h1></body></html>" -Encoding UTF8
+}
+Write-Host "      ✔ Windows binary and WebUI dashboard deployed`n" -ForegroundColor Green
 
-# 4. Configuration Setup
-Write-Host "[4/5] Setting up configuration profile..." -ForegroundColor Cyan
+# 5. Configuration Setup
+Write-Host "[5/6] ⚙️  Configuring service profile..." -ForegroundColor Cyan
+$adminKey = "admin123"
 if (-not (Test-Path $configFile)) {
     $bytes = New-Object byte[] 16
     [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
@@ -75,7 +117,7 @@ api-keys:
 
 remote-management:
   allow-remote: true
-  secret-key: "admin123"
+  secret-key: "$adminKey"
   disable-control-panel: false
   panel-github-repository: "https://github.com/router-for-me/Cli-Proxy-API-Management-Center"
 
@@ -105,46 +147,137 @@ oauth-model-alias:
       fork: true
 "@
     Set-Content -Path $configFile -Value $yamlContent -Encoding UTF8
-    Write-Host "✔ Default configuration created with secret: admin123" -ForegroundColor Green
+    Write-Host "      ✔ Config created (Secret: $adminKey)`n" -ForegroundColor Green
 } else {
-    Write-Host "✔ Existing configuration preserved: $configFile" -ForegroundColor Green
+    Write-Host "      ✔ Existing configuration preserved: $configFile`n" -ForegroundColor Green
 }
 
-# 5. Create CLI Command Launcher
-Write-Host "[5/5] Registering command launcher..." -ForegroundColor Cyan
+# 6. Command Launcher and PATH Registration
+Write-Host "[6/6] 🔗 Registering CLI command launcher and PATH..." -ForegroundColor Cyan
+
 $cmdLauncher = "$binDir\cliproxyapi.cmd"
 $cmdScript = @"
 @echo off
+setlocal
+set "BASE_DIR=$baseDir"
+set "BIN=$binDir\cli-proxy-api.exe"
+set "CONFIG=$configFile"
+set "LOG_FILE=$logDir\service.log"
 set "MANAGEMENT_STATIC_PATH=$staticDir"
-if "%~1"=="" (
-    start "" "$binDir\cli-proxy-api.exe" -config "$configFile"
-    echo CLIProxyAPI started in background.
-    echo Dashboard: http://127.0.0.1:8317/management.html
-) else if "%~1"=="run" (
-    shift
-    "$binDir\cli-proxy-api.exe" -config "$configFile" %*
-) else (
-    "$binDir\cli-proxy-api.exe" -config "$configFile" %*
-)
-"@
-Set-Content -Path $cmdLauncher -Value $cmdScript
 
-# Append to User PATH if missing
+if "%~1"=="" goto help
+if "%~1"=="start" goto start
+if "%~1"=="stop" goto stop
+if "%~1"=="restart" goto restart
+if "%~1"=="status" goto status
+if "%~1"=="logs" goto logs
+if "%~1"=="log" goto logs
+if "%~1"=="update" goto update
+if "%~1"=="upgrade" goto update
+if "%~1"=="run" goto run
+goto passthrough
+
+:start
+tasklist /fi "imagename eq cli-proxy-api.exe" 2>NUL | find /i "cli-proxy-api.exe" >NUL
+if not errorlevel 1 (
+    echo [!] CLIProxyAPI is already running.
+    exit /b 0
+)
+echo [*] Starting CLIProxyAPI background daemon...
+powershell -NoProfile -WindowStyle Hidden -Command "Start-Process -FilePath '%BIN%' -ArgumentList '-config \"%CONFIG%\"' -WorkingDirectory '%BASE_DIR%' -RedirectStandardOutput '%LOG_FILE%' -RedirectStandardError '%LOG_FILE%'"
+timeout /t 1 /nobreak >NUL
+tasklist /fi "imagename eq cli-proxy-api.exe" 2>NUL | find /i "cli-proxy-api.exe" >NUL
+if not errorlevel 1 (
+    echo [v] CLIProxyAPI is running!
+    echo Endpoint : http://127.0.0.1:8317
+    echo Dashboard: http://127.0.0.1:8317/management.html
+) else (
+    echo [x] Failed to start. Check logs: %LOG_FILE%
+)
+exit /b 0
+
+:stop
+tasklist /fi "imagename eq cli-proxy-api.exe" 2>NUL | find /i "cli-proxy-api.exe" >NUL
+if not errorlevel 1 (
+    taskkill /f /im cli-proxy-api.exe >NUL 2>&1
+    echo [v] CLIProxyAPI daemon stopped.
+) else (
+    echo [!] CLIProxyAPI is not running.
+)
+exit /b 0
+
+:restart
+call :stop
+timeout /t 1 /nobreak >NUL
+goto start
+
+:status
+tasklist /fi "imagename eq cli-proxy-api.exe" 2>NUL | find /i "cli-proxy-api.exe" >NUL
+if not errorlevel 1 (
+    echo [v] CLIProxyAPI is active
+    echo Endpoint : http://127.0.0.1:8317
+    echo Dashboard: http://127.0.0.1:8317/management.html
+) else (
+    echo [x] CLIProxyAPI is not running.
+)
+exit /b 0
+
+:logs
+powershell -NoProfile -Command "if (Test-Path '%LOG_FILE%') { Get-Content -Path '%LOG_FILE%' -Wait -Tail 50 } else { Write-Host 'No logs found yet.' }"
+exit /b 0
+
+:update
+echo [*] Upgrading CLIProxyAPI via official installer...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/tsaQB/cliproxyapi-installer/main/install.ps1 | iex"
+exit /b 0
+
+:run
+shift
+"%BIN%" -config "%CONFIG%" %1 %2 %3 %4 %5 %6 %7 %8 %9
+exit /b %errorlevel%
+
+:passthrough
+"%BIN%" -config "%CONFIG%" %*
+exit /b %errorlevel%
+
+:help
+echo CLIProxyAPI Windows Commands:
+echo   cliproxyapi start      - Launch service in background
+echo   cliproxyapi stop       - Stop background service
+echo   cliproxyapi restart    - Restart service daemon
+echo   cliproxyapi status     - View service running status
+echo   cliproxyapi logs       - Stream real-time service logs
+echo   cliproxyapi update     - Upgrade to latest release
+echo   cliproxyapi run        - Run in foreground console
+echo   cliproxyapi ^<options^>  - Pass flags directly (e.g. -antigravity-login)
+exit /b 0
+"@
+Set-Content -Path $cmdLauncher -Value $cmdScript -Encoding ASCII
+
+# Add to User PATH if missing
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
 if ($userPath -notlike "*$binDir*") {
     [Environment]::SetEnvironmentVariable("Path", "$binDir;$userPath", "User")
-    Write-Host "✔ Added $binDir to User PATH" -ForegroundColor Green
+    $env:Path = "$binDir;$env:Path"
+}
+Write-Host "      ✔ Command 'cliproxyapi' registered in PATH`n" -ForegroundColor Green
+
+# Resume process if it was running before upgrade
+if ($wasRunning) {
+    Write-Host "      🔄 Resuming CLIProxyAPI in background..." -ForegroundColor Cyan
+    Start-Process -FilePath "$binDir\cli-proxy-api.exe" -ArgumentList "-config `"$configFile`"" -WorkingDirectory $baseDir -WindowStyle Hidden
 }
 
-Write-Host ""
 Write-Host "────────────────────────────────────────────────────" -ForegroundColor Green
 Write-Host "  🎉 Installation Complete!" -ForegroundColor Green
-Write-Host "────────────────────────────────────────────────────" -ForegroundColor Green
-Write-Host "  • WebUI Dashboard : http://127.0.0.1:8317/management.html"
-Write-Host "  • Default Secret  : admin123"
-Write-Host "  • Configuration   : $configFile"
-Write-Host ""
-Write-Host "  Command to run:"
-Write-Host "    cliproxyapi run     (Run in terminal)"
-Write-Host "    cliproxyapi         (Run in background)"
+Write-Host "────────────────────────────────────────────────────`n" -ForegroundColor Green
+Write-Host "  • WebUI Dashboard : http://127.0.0.1:8317/management.html" -ForegroundColor Cyan
+Write-Host "  • Default Secret  : $adminKey" -ForegroundColor Yellow
+Write-Host "  • Configuration   : $configFile`n" -ForegroundColor DarkGray
+Write-Host "  Quick Start Commands:" -ForegroundColor White
+Write-Host "    $ cliproxyapi start   Start service in background" -ForegroundColor Cyan
+Write-Host "    $ cliproxyapi status  Check server status" -ForegroundColor Cyan
+Write-Host "    $ cliproxyapi logs    Stream live logs" -ForegroundColor Cyan
+Write-Host "    $ cliproxyapi update  Upgrade to latest release" -ForegroundColor Cyan
+Write-Host "    $ cliproxyapi stop    Stop background daemon`n" -ForegroundColor Cyan
 Write-Host "────────────────────────────────────────────────────" -ForegroundColor Green
