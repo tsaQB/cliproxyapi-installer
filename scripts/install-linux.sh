@@ -183,8 +183,23 @@ if [ -f "${CONFIG_FILE}" ]; then
     RANDOM_KEY=$(grep -E '^[[:space:]]*-[[:space:]]*"?[a-zA-Z0-9]+' "${CONFIG_FILE}" 2>/dev/null | head -n 1 | tr -d ' "-' || echo "configured")
     ADMIN_KEY=$(grep -E '^[[:space:]]*secret-key:[[:space:]]*' "${CONFIG_FILE}" 2>/dev/null | head -n 1 | awk '{print $2}' | tr -d ' "\047' || echo "admin123")
 else
-    RANDOM_KEY=$(dd if=/dev/urandom bs=16 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')
-    ADMIN_KEY="admin123"
+    # Check for existing legacy configuration (e.g. prior manual setup)
+    LEGACY_CONFIG=""
+    for cand in "/root/config.yaml" "${HOME}/config.yaml" "${HOME}/.cli-proxy-api/config.yaml" "${HOME}/.cliproxyapi/config.yaml"; do
+        if [ -f "$cand" ]; then
+            LEGACY_CONFIG="$cand"
+            break
+        fi
+    done
+
+    if [ -n "$LEGACY_CONFIG" ]; then
+        cp -f "$LEGACY_CONFIG" "${CONFIG_FILE}"
+        printf "      %b✔ Existing configuration imported and preserved from %s%b\n\n" "${C_GREEN}" "$LEGACY_CONFIG" "${C_RESET}"
+        RANDOM_KEY=$(grep -E '^[[:space:]]*-[[:space:]]*"?[a-zA-Z0-9]+' "${CONFIG_FILE}" 2>/dev/null | head -n 1 | tr -d ' "-' || echo "configured")
+        ADMIN_KEY=$(grep -E '^[[:space:]]*secret-key:[[:space:]]*' "${CONFIG_FILE}" 2>/dev/null | head -n 1 | awk '{print $2}' | tr -d ' "\047' || echo "admin123")
+    else
+        RANDOM_KEY=$(dd if=/dev/urandom bs=16 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')
+        ADMIN_KEY="admin123"
     cat << EOF > "${CONFIG_FILE}"
 # CLIProxyAPI Linux Configuration
 host: "0.0.0.0"
@@ -226,6 +241,7 @@ oauth-model-alias:
 EOF
     chmod 600 "${CONFIG_FILE}"
     printf "      %b✔ Config created (Secret: %b%s%b)%b\n\n" "${C_GREEN}" "${C_YELLOW}" "${ADMIN_KEY}" "${C_GREEN}" "${C_RESET}"
+    fi
 fi
 
 # 6. Service Management (Systemd & CLI Helper)
@@ -265,6 +281,7 @@ fi
 
 # Write CLI management wrapper
 SHELL_BIN=$(command -v bash 2>/dev/null || command -v sh 2>/dev/null || echo "/bin/sh")
+rm -f "${WRAPPER_PATH}"
 cat << EOF > "${WRAPPER_PATH}"
 #!${SHELL_BIN}
 BIN="${BIN_PATH}"
