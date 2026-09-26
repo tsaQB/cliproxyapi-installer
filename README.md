@@ -31,7 +31,7 @@ Open PowerShell (Windows 10, 11, or Server) and run:
 irm https://raw.githubusercontent.com/tsaQB/cliproxyapi-installer/main/install.ps1 | iex
 ```
 
-The installer detects AMD64 or ARM64, deploys the official Windows executable and WebUI, configures background service controls (`cliproxyapi.cmd`), registers the binary into your User `PATH`, and exports necessary static environment variables.
+The installer detects AMD64 or ARM64, deploys the official Windows executable and WebUI, configures background service controls (`cliproxyapi.cmd` and `cliproxyapi.ps1`), registers the binary into your User `PATH`, and exports necessary static environment variables.
 
 ---
 
@@ -42,7 +42,7 @@ The installer detects AMD64 or ARM64, deploys the official Windows executable an
 | **Linux (Ubuntu, Debian, Arch, Fedora, RHEL, Alpine)** | `x86_64` (amd64) | Upstream Official | Systemd (System/User) or Daemon Fallback | ✅ Supported |
 | **Linux (Raspberry Pi, Cloud ARM64, Graviton)** | `aarch64` (arm64) | Upstream Official | Systemd (System/User) or Daemon Fallback | ✅ Supported |
 | **Android (Termux Non-Root)** | `aarch64` (arm64) | [tsaQB/cliproxyapi-android](https://github.com/tsaQB/cliproxyapi-android) (NDK Bionic) | Background Daemon CLI (`setsid`) | ✅ Supported |
-| **Windows 10 / 11 / Server** | `x64` / `ARM64` | Upstream Official | Windows Background Process (`cliproxyapi.cmd`) | ✅ Supported |
+| **Windows 10 / 11 / Server** | `x64` / `ARM64` | Upstream Official | Windows Background Process (`cliproxyapi.cmd` / `cliproxyapi.ps1`) | ✅ Supported |
 | **macOS (Apple Silicon & Intel)** | `arm64` / `x86_64` | Upstream Official | Launchd / User Daemon | ⏳ Coming Soon |
 
 > [!NOTE]
@@ -98,7 +98,7 @@ cliproxyapi -xai-login -no-browser
 | Component | Linux (Root) | Linux (User-Space) | Android (Termux) | Windows |
 | :--- | :--- | :--- | :--- | :--- |
 | **Binary Executable** | `/usr/local/bin/cli-proxy-api` | `~/.local/bin/cli-proxy-api` | `~/.cliproxyapi/bin/cli-proxy-api` | `%USERPROFILE%\.cliproxyapi\bin\cli-proxy-api.exe` |
-| **CLI Command** | `/usr/local/bin/cliproxyapi` | `~/.local/bin/cliproxyapi` | `$PREFIX/bin/cliproxyapi` | `%USERPROFILE%\.cliproxyapi\bin\cliproxyapi.cmd` |
+| **CLI Command** | `/usr/local/bin/cliproxyapi` | `~/.local/bin/cliproxyapi` | `$PREFIX/bin/cliproxyapi` | `%USERPROFILE%\.cliproxyapi\bin\cliproxyapi.cmd` / `.ps1` |
 | **Configuration** | `/etc/cliproxyapi/config.yaml` | `~/.cliproxyapi/config.yaml` | `~/.cliproxyapi/config.yaml` | `%USERPROFILE%\.cliproxyapi\config.yaml` |
 | **WebUI Dashboard** | `/var/lib/cliproxyapi/static/` | `~/.cliproxyapi/static/` | `~/.cliproxyapi/static/` | `%USERPROFILE%\.cliproxyapi\static\` |
 | **OAuth Credentials** | `/var/lib/cliproxyapi/auths/` | `~/.cliproxyapi/auths/` | `~/.cliproxyapi/auths/` | `%USERPROFILE%\.cliproxyapi\auths\` |

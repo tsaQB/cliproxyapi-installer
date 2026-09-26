@@ -6,9 +6,12 @@
 $ErrorActionPreference = "Stop"
 
 # Force TLS 1.2+ for older PowerShell 5.1
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]'Tls13'
+} catch {}
 
-Clear-Host -ErrorAction SilentlyContinue
+try { Clear-Host } catch {}
 
 Write-Host "____ _     ___ ____                      _    ____ ___ " -ForegroundColor Cyan
 Write-Host "/ ___| |   |_ _|  _ \ _ __ _____  ___   _/ \  |  _ \_ _|" -ForegroundColor Cyan
@@ -111,6 +114,8 @@ Write-Host "      ✔ Windows binary and WebUI dashboard deployed`n" -Foreground
 # 5. Configuration Setup
 Write-Host "[5/6] ⚙️  Configuring service profile..." -ForegroundColor Cyan
 $adminKey = "admin123"
+$authDirYaml = $authDir.Replace('\', '/')
+
 if (-not (Test-Path $configFile)) {
     $bytes = New-Object byte[] 16
     [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
@@ -130,7 +135,7 @@ remote-management:
   disable-control-panel: false
   panel-github-repository: "https://github.com/router-for-me/Cli-Proxy-API-Management-Center"
 
-auth-dir: "$authDir"
+auth-dir: "$authDirYaml"
 log-level: "info"
 logging-to-file: true
 logs-max-total-size-mb: 50
@@ -159,119 +164,198 @@ oauth-model-alias:
     Write-Host "      ✔ Config created (Secret: $adminKey)`n" -ForegroundColor Green
 } else {
     Write-Host "      ✔ Existing configuration preserved: $configFile`n" -ForegroundColor Green
-    $existingSecret = (Get-Content -Path $configFile -ErrorAction SilentlyContinue | Select-String -Pattern '^\s*secret-key:\s*"?([^"\r\n]+)"?' | ForEach-Object { $_.Matches.Groups[1].Value.Trim() } | Select-Object -First 1)
-    if ($existingSecret) {
-        $adminKey = $existingSecret
+    $existingYaml = Get-Content -Path $configFile -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
+    if ($existingYaml) {
+        # Auto-heal unescaped Windows backslashes in auth-dir from older versions
+        if ($existingYaml -match 'auth-dir:\s*"([^"]*\\Users[^"]*)"') {
+            $badAuth = $matches[1]
+            $goodAuth = $badAuth.Replace('\', '/')
+            $fixedYaml = $existingYaml.Replace("`"$badAuth`"", "`"$goodAuth`"")
+            Set-Content -Path $configFile -Value $fixedYaml -Encoding UTF8
+        }
+        $existingSecret = ($existingYaml | Select-String -Pattern '^\s*secret-key:\s*["'']?([^#"''\r\n]+)["'']?' | ForEach-Object { $_.Matches.Groups[1].Value.Trim() } | Select-Object -First 1)
+        if ($existingSecret) {
+            $adminKey = $existingSecret
+        }
     }
 }
 
 # 6. Command Launcher and PATH Registration
 Write-Host "[6/6] 🔗 Registering CLI command launcher and PATH..." -ForegroundColor Cyan
 
+# 6a. Generate PowerShell CLI Controller
+$ps1Launcher = "$binDir\cliproxyapi.ps1"
+$ps1Script = @'
+<#
+.SYNOPSIS
+    CLIProxyAPI Management Utility for Windows (PowerShell & CMD)
+#>
+$baseDir = "$env:USERPROFILE\.cliproxyapi"
+$binDir = "$baseDir\bin"
+$bin = "$binDir\cli-proxy-api.exe"
+$config = "$baseDir\config.yaml"
+$logDir = "$baseDir\logs"
+$logFile = "$logDir\service.log"
+$staticDir = "$baseDir\static"
+
+$env:MANAGEMENT_STATIC_PATH = $staticDir
+
+function Get-DaemonProcess {
+    Get-Process -Name "cli-proxy-api" -ErrorAction SilentlyContinue
+}
+
+$cmd = if ($args.Count -gt 0) { $args[0].ToLower() } else { "help" }
+
+if ($args.Count -gt 0 -and $args[0].StartsWith("-")) {
+    & $bin -config $config $args
+    exit $LASTEXITCODE
+}
+
+switch ($cmd) {
+    "start" {
+        $p = Get-DaemonProcess
+        if ($p) {
+            Write-Host "[!] CLIProxyAPI is already running (PID: $($p.Id))." -ForegroundColor Yellow
+            exit 0
+        }
+        Write-Host "[*] Starting CLIProxyAPI background daemon..." -ForegroundColor Cyan
+        if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Force -Path $logDir | Out-Null }
+
+        $cmdArg = "/c `"`"$bin`" -config `"$config`" >> `"$logFile`" 2>&1`""
+        Start-Process -FilePath "cmd.exe" -ArgumentList $cmdArg -WorkingDirectory $baseDir -WindowStyle Hidden
+        Start-Sleep -Seconds 1
+
+        $p = Get-DaemonProcess
+        if ($p) {
+            Write-Host "[v] CLIProxyAPI is running! (PID: $($p.Id))" -ForegroundColor Green
+            Write-Host "    Endpoint  : http://127.0.0.1:8317" -ForegroundColor Cyan
+            Write-Host "    Dashboard : http://127.0.0.1:8317/management.html" -ForegroundColor Cyan
+        } else {
+            Write-Host "[x] Failed to start. Check logs: $logFile" -ForegroundColor Red
+            if (Test-Path $logFile) {
+                Write-Host "`nLast log entries:" -ForegroundColor DarkGray
+                Get-Content -Path $logFile -Tail 5 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+            }
+        }
+        exit 0
+    }
+    "stop" {
+        $p = Get-DaemonProcess
+        if ($p) {
+            $p | Stop-Process -Force -ErrorAction SilentlyContinue
+            Write-Host "[v] CLIProxyAPI daemon stopped." -ForegroundColor Green
+        } else {
+            Write-Host "[!] CLIProxyAPI is not running." -ForegroundColor Yellow
+        }
+        exit 0
+    }
+    "restart" {
+        $p = Get-DaemonProcess
+        if ($p) {
+            $p | Stop-Process -Force -ErrorAction SilentlyContinue
+            Write-Host "[v] CLIProxyAPI daemon stopped." -ForegroundColor Green
+            Start-Sleep -Seconds 1
+        }
+        Write-Host "[*] Starting CLIProxyAPI background daemon..." -ForegroundColor Cyan
+        if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Force -Path $logDir | Out-Null }
+
+        $cmdArg = "/c `"`"$bin`" -config `"$config`" >> `"$logFile`" 2>&1`""
+        Start-Process -FilePath "cmd.exe" -ArgumentList $cmdArg -WorkingDirectory $baseDir -WindowStyle Hidden
+        Start-Sleep -Seconds 1
+
+        $p = Get-DaemonProcess
+        if ($p) {
+            Write-Host "[v] CLIProxyAPI is running! (PID: $($p.Id))" -ForegroundColor Green
+            Write-Host "    Endpoint  : http://127.0.0.1:8317" -ForegroundColor Cyan
+            Write-Host "    Dashboard : http://127.0.0.1:8317/management.html" -ForegroundColor Cyan
+        } else {
+            Write-Host "[x] Failed to start. Check logs: $logFile" -ForegroundColor Red
+        }
+        exit 0
+    }
+    "status" {
+        $p = Get-DaemonProcess
+        if ($p) {
+            $mem = [math]::Round($p.WorkingSet64 / 1MB, 2)
+            Write-Host "[v] CLIProxyAPI is active" -ForegroundColor Green
+            Write-Host "    PID       : $($p.Id)" -ForegroundColor White
+            Write-Host "    Memory    : $mem MB" -ForegroundColor White
+            Write-Host "    Endpoint  : http://127.0.0.1:8317" -ForegroundColor Cyan
+            Write-Host "    Dashboard : http://127.0.0.1:8317/management.html" -ForegroundColor Cyan
+        } else {
+            Write-Host "[x] CLIProxyAPI is not running." -ForegroundColor Red
+        }
+        exit 0
+    }
+    { $_ -in "logs", "log" } {
+        if (Test-Path $logFile) {
+            Write-Host "Streaming live logs from $logFile (Ctrl+C to exit)..." -ForegroundColor DarkGray
+            Get-Content -Path $logFile -Wait -Tail 50
+        } else {
+            Write-Host "No logs found yet at $logFile" -ForegroundColor Yellow
+        }
+        exit 0
+    }
+    { $_ -in "update", "upgrade" } {
+        Write-Host "[*] Upgrading CLIProxyAPI via official installer..." -ForegroundColor Cyan
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::SecurityProtocol -bor [Net.SecurityProtocolType]'Tls13'
+        } catch {}
+        Invoke-Expression (Invoke-RestMethod -Uri "https://raw.githubusercontent.com/tsaQB/cliproxyapi-installer/main/install.ps1" -UseBasicParsing)
+        exit 0
+    }
+    "run" {
+        $remaining = if ($args.Count -gt 1) { $args[1..($args.Count-1)] } else { @() }
+        & $bin -config $config $remaining
+        exit $LASTEXITCODE
+    }
+    "help" {
+        Write-Host "CLIProxyAPI Windows Commands:" -ForegroundColor White
+        Write-Host "  cliproxyapi start      - Launch service in background" -ForegroundColor Cyan
+        Write-Host "  cliproxyapi stop       - Stop background service" -ForegroundColor Cyan
+        Write-Host "  cliproxyapi restart    - Restart service daemon" -ForegroundColor Cyan
+        Write-Host "  cliproxyapi status     - View service running status" -ForegroundColor Cyan
+        Write-Host "  cliproxyapi logs       - Stream real-time service logs" -ForegroundColor Cyan
+        Write-Host "  cliproxyapi update     - Upgrade to latest release" -ForegroundColor Cyan
+        Write-Host "  cliproxyapi run        - Run in foreground console" -ForegroundColor Cyan
+        Write-Host "  cliproxyapi <options>  - Pass flags directly (e.g. -antigravity-login)" -ForegroundColor Cyan
+        exit 0
+    }
+    default {
+        & $bin -config $config $args
+        exit $LASTEXITCODE
+    }
+}
+'@
+Set-Content -Path $ps1Launcher -Value $ps1Script -Encoding UTF8
+
+# 6b. Generate Command Prompt Forwarder (.cmd)
 $cmdLauncher = "$binDir\cliproxyapi.cmd"
 $cmdScript = @"
 @echo off
 setlocal
-set "BASE_DIR=$baseDir"
-set "BIN=$binDir\cli-proxy-api.exe"
-set "CONFIG=$configFile"
-set "LOG_FILE=$logDir\service.log"
-set "MANAGEMENT_STATIC_PATH=$staticDir"
-
-if "%~1"=="" goto help
-if "%~1"=="start" goto start
-if "%~1"=="stop" goto stop
-if "%~1"=="restart" goto restart
-if "%~1"=="status" goto status
-if "%~1"=="logs" goto logs
-if "%~1"=="log" goto logs
-if "%~1"=="update" goto update
-if "%~1"=="upgrade" goto update
-if "%~1"=="run" goto run
-goto passthrough
-
-:start
-tasklist /fi "imagename eq cli-proxy-api.exe" 2>NUL | find /i "cli-proxy-api.exe" >NUL
-if not errorlevel 1 (
-    echo [!] CLIProxyAPI is already running.
-    exit /b 0
-)
-echo [*] Starting CLIProxyAPI background daemon...
-powershell -NoProfile -WindowStyle Hidden -Command "Start-Process -FilePath '%BIN%' -ArgumentList '-config', '%CONFIG%' -WorkingDirectory '%BASE_DIR%' -RedirectStandardOutput '%LOG_FILE%' -RedirectStandardError '%LOG_FILE%'"
-timeout /t 1 /nobreak >NUL
-tasklist /fi "imagename eq cli-proxy-api.exe" 2>NUL | find /i "cli-proxy-api.exe" >NUL
-if not errorlevel 1 (
-    echo [v] CLIProxyAPI is running!
-    echo Endpoint : http://127.0.0.1:8317
-    echo Dashboard: http://127.0.0.1:8317/management.html
-) else (
-    echo [x] Failed to start. Check logs: %LOG_FILE%
-)
-exit /b 0
-
-:stop
-tasklist /fi "imagename eq cli-proxy-api.exe" 2>NUL | find /i "cli-proxy-api.exe" >NUL
-if not errorlevel 1 (
-    taskkill /f /im cli-proxy-api.exe >NUL 2>&1
-    echo [v] CLIProxyAPI daemon stopped.
-) else (
-    echo [!] CLIProxyAPI is not running.
-)
-exit /b 0
-
-:restart
-call :stop
-timeout /t 1 /nobreak >NUL
-goto start
-
-:status
-tasklist /fi "imagename eq cli-proxy-api.exe" 2>NUL | find /i "cli-proxy-api.exe" >NUL
-if not errorlevel 1 (
-    echo [v] CLIProxyAPI is active
-    echo Endpoint : http://127.0.0.1:8317
-    echo Dashboard: http://127.0.0.1:8317/management.html
-) else (
-    echo [x] CLIProxyAPI is not running.
-)
-exit /b 0
-
-:logs
-powershell -NoProfile -Command "if (Test-Path '%LOG_FILE%') { Get-Content -Path '%LOG_FILE%' -Wait -Tail 50 } else { Write-Host 'No logs found yet.' }"
-exit /b 0
-
-:update
-echo [*] Upgrading CLIProxyAPI via official installer...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/tsaQB/cliproxyapi-installer/main/install.ps1 | iex"
-exit /b 0
-
-:run
-set "ARGS=%*"
-set "ARGS=%ARGS:*run=%"
-"%BIN%" -config "%CONFIG%" %ARGS%
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0cliproxyapi.ps1" %*
 exit /b %errorlevel%
-
-:passthrough
-"%BIN%" -config "%CONFIG%" %*
-exit /b %errorlevel%
-
-:help
-echo CLIProxyAPI Windows Commands:
-echo   cliproxyapi start      - Launch service in background
-echo   cliproxyapi stop       - Stop background service
-echo   cliproxyapi restart    - Restart service daemon
-echo   cliproxyapi status     - View service running status
-echo   cliproxyapi logs       - Stream real-time service logs
-echo   cliproxyapi update     - Upgrade to latest release
-echo   cliproxyapi run        - Run in foreground console
-echo   cliproxyapi ^<options^>  - Pass flags directly (e.g. -antigravity-login)
-exit /b 0
 "@
 Set-Content -Path $cmdLauncher -Value $cmdScript -Encoding ASCII
 
+# 6c. Generate Git Bash / MSYS2 Forwarder (extensionless)
+$shLauncher = "$binDir\cliproxyapi"
+$shScript = @'
+#!/bin/sh
+SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd || true)"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${SCRIPT_DIR}/cliproxyapi.ps1" "$@"
+exit $?
+'@
+Set-Content -Path $shLauncher -Value $shScript -Encoding ASCII
+
 # Add to User PATH if missing
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-if ($userPath -notlike "*$binDir*") {
-    [Environment]::SetEnvironmentVariable("Path", "$binDir;$userPath", "User")
+$pathEntries = if ($userPath) { $userPath -split ';' } else { @() }
+if ($pathEntries -notcontains $binDir) {
+    $newPath = if ($userPath) { "$binDir;$userPath" } else { $binDir }
+    [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
     $env:Path = "$binDir;$env:Path"
 }
 [Environment]::SetEnvironmentVariable("MANAGEMENT_STATIC_PATH", $staticDir, "User")
@@ -281,7 +365,8 @@ Write-Host "      ✔ Command 'cliproxyapi' registered in PATH`n" -ForegroundCol
 # Resume process if it was running before upgrade
 if ($wasRunning) {
     Write-Host "      🔄 Resuming CLIProxyAPI in background..." -ForegroundColor Cyan
-    Start-Process -FilePath "$binDir\cli-proxy-api.exe" -ArgumentList "-config", $configFile -WorkingDirectory $baseDir -RedirectStandardOutput "$logDir\service.log" -RedirectStandardError "$logDir\service.log" -WindowStyle Hidden
+    $resumeArg = "/c `"`"$binDir\cli-proxy-api.exe`" -config `"$configFile`" >> `"$logDir\service.log`" 2>&1`""
+    Start-Process -FilePath "cmd.exe" -ArgumentList $resumeArg -WorkingDirectory $baseDir -WindowStyle Hidden
     Start-Sleep -Seconds 1
     if (Get-Process -Name "cli-proxy-api" -ErrorAction SilentlyContinue) {
         Write-Host "      ✔ Daemon resumed successfully`n" -ForegroundColor Green
