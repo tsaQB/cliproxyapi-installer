@@ -204,6 +204,14 @@ function Get-DaemonProcess {
     Get-Process -Name "cli-proxy-api" -ErrorAction SilentlyContinue
 }
 
+function Start-DaemonProcess {
+    if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Force -Path $logDir | Out-Null }
+    $cmdArg = "/c `"`"$bin`" -config `"$config`" >> `"$logFile`" 2>&1`""
+    Start-Process -FilePath "cmd.exe" -ArgumentList $cmdArg -WorkingDirectory $baseDir -WindowStyle Hidden
+    Start-Sleep -Seconds 1
+    return (Get-DaemonProcess)
+}
+
 $cmd = if ($args.Count -gt 0) { $args[0].ToLower() } else { "help" }
 
 if ($args.Count -gt 0 -and $args[0].StartsWith("-")) {
@@ -219,13 +227,8 @@ switch ($cmd) {
             exit 0
         }
         Write-Host "[*] Starting CLIProxyAPI background daemon..." -ForegroundColor Cyan
-        if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Force -Path $logDir | Out-Null }
+        $p = Start-DaemonProcess
 
-        $cmdArg = "/c `"`"$bin`" -config `"$config`" >> `"$logFile`" 2>&1`""
-        Start-Process -FilePath "cmd.exe" -ArgumentList $cmdArg -WorkingDirectory $baseDir -WindowStyle Hidden
-        Start-Sleep -Seconds 1
-
-        $p = Get-DaemonProcess
         if ($p) {
             Write-Host "[v] CLIProxyAPI is running! (PID: $($p.Id))" -ForegroundColor Green
             Write-Host "    Endpoint  : http://127.0.0.1:8317" -ForegroundColor Cyan
@@ -257,13 +260,8 @@ switch ($cmd) {
             Start-Sleep -Seconds 1
         }
         Write-Host "[*] Starting CLIProxyAPI background daemon..." -ForegroundColor Cyan
-        if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Force -Path $logDir | Out-Null }
+        $p = Start-DaemonProcess
 
-        $cmdArg = "/c `"`"$bin`" -config `"$config`" >> `"$logFile`" 2>&1`""
-        Start-Process -FilePath "cmd.exe" -ArgumentList $cmdArg -WorkingDirectory $baseDir -WindowStyle Hidden
-        Start-Sleep -Seconds 1
-
-        $p = Get-DaemonProcess
         if ($p) {
             Write-Host "[v] CLIProxyAPI is running! (PID: $($p.Id))" -ForegroundColor Green
             Write-Host "    Endpoint  : http://127.0.0.1:8317" -ForegroundColor Cyan
