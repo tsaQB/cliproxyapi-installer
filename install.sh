@@ -1,8 +1,8 @@
 #!/bin/sh
 # ==============================================================================
 # CLIProxyAPI Universal Multiplatform Installer
-# Supports: Linux (x86_64, aarch64), Android (Termux ARM64)
-# Windows & macOS: In development
+# Supports: Linux (x86_64, aarch64), Android (Termux ARM64), Windows (x64, ARM64)
+# macOS: In development
 # Repository: https://github.com/tsaQB/cliproxyapi-installer
 # ==============================================================================
 set -eu
