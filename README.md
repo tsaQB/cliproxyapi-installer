@@ -1,7 +1,7 @@
 # CLIProxyAPI Universal Installer
 
 [![License](https://img.shields.io/github/license/tsaQB/cliproxyapi-installer?style=flat-square&color=f59e0b)](LICENSE)
-[![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Termux%20%7C%20Windows-emerald?style=flat-square)](#-supported-platforms--architectures)
+[![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Termux%20%7C%20Windows-10b981?style=flat-square)](#-supported-platforms--architectures)
 [![Service](https://img.shields.io/badge/Service-Systemd%20%7C%20Daemon%20%7C%20Windows%20Process-38bdf8?style=flat-square)](#%EF%B8%8F-quick-management-commands)
 
 One-line universal installer, lifecycle service manager, and updater for [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) and the [Management Center WebUI](https://github.com/router-for-me/Cli-Proxy-API-Management-Center).
@@ -17,9 +17,9 @@ Run this single command in your terminal:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/tsaQB/cliproxyapi-installer/main/install.sh | bash
 ```
-*(On minimal distributions without `bash`, such as Alpine Linux, pipe into `sh` instead).*
+*(On minimal distributions without `bash`, such as Alpine Linux, pipe into `sh` instead. Requires `curl`, `tar`, and `gzip`.)*
 
-The installer automatically detects your operating system, CPU architecture, and environment privileges. It downloads the correct native binary and WebUI dashboard, generates default configuration (or seamlessly migrates and preserves existing profiles/tokens), and registers the `cliproxyapi` command into your `PATH`.
+The installer automatically detects your operating system, CPU architecture, C library (glibc or musl), and environment privileges. It downloads the correct native binary and WebUI dashboard, generates default configuration (or seamlessly migrates and preserves existing profiles/tokens), and registers the `cliproxyapi` command into your `PATH`.
 
 ---
 
@@ -39,8 +39,8 @@ The installer detects AMD64 or ARM64, deploys the official Windows executable an
 
 | Operating System | Architecture | Binary Distribution | Service Manager | Status |
 | :--- | :--- | :--- | :--- | :--- |
-| **Linux (Ubuntu, Debian, Armbian, Arch, Fedora, Alpine)** | `x86_64` (amd64) | Upstream Official | Systemd (System/User) or Daemon Fallback | ✅ Supported |
-| **Linux (Armbian, Raspberry Pi, Cloud ARM64, Graviton)** | `aarch64` (arm64) | Upstream Official | Systemd (System/User) or Daemon Fallback | ✅ Supported |
+| **Linux (Ubuntu, Debian, Armbian, Arch, Fedora, Alpine)** | `x86_64` (amd64) | Upstream Official (glibc, or portable `no-plugin` build on musl) | Systemd (System/User) or Daemon Fallback | ✅ Supported |
+| **Linux (Armbian, Raspberry Pi, Cloud ARM64, Graviton)** | `aarch64` (arm64) | Upstream Official (glibc, or portable `no-plugin` build on musl) | Systemd (System/User) or Daemon Fallback | ✅ Supported |
 | **Android (Termux Non-Root)** | `aarch64` (arm64) | [tsaQB/cliproxyapi-android](https://github.com/tsaQB/cliproxyapi-android) (NDK Bionic) | Background Daemon CLI (`setsid`) | ✅ Supported |
 | **Windows 10 / 11 / Server** | `x64` / `ARM64` | Upstream Official | Windows Background Process (`cliproxyapi` CLI) | ✅ Supported |
 | **macOS (Apple Silicon & Intel)** | `arm64` / `x86_64` | Upstream Official | Launchd / User Daemon | ⏳ Coming Soon |
@@ -57,14 +57,19 @@ After installation, use the `cliproxyapi` command across all platforms (Linux, T
 
 ```bash
 cliproxyapi start        # Start service in background
-cliproxyapi status       # View service status, PID, and active ports
+cliproxyapi status       # View service status, PID, and endpoints
 cliproxyapi logs         # Stream real-time service logs
-cliproxyapi restart      # Restart service daemon
+cliproxyapi restart      # Restart service
 cliproxyapi stop         # Stop background service
 cliproxyapi run          # Run in foreground console
 cliproxyapi update       # In-place upgrade binary and WebUI dashboard
+cliproxyapi help         # Show available commands
 cliproxyapi <options>    # Pass flags directly to engine (e.g. -antigravity-login)
 ```
+
+> [!TIP]
+> For a system-wide Linux install (installed as root), run `start`, `stop`, `restart`, and `update` with `sudo`.
+> For a user-space install on systemd, run `sudo loginctl enable-linger $USER` once so the service keeps running after you log out.
 
 ---
 
@@ -102,15 +107,18 @@ cliproxyapi -xai-login -no-browser
 | **Configuration** | `/etc/cliproxyapi/config.yaml` | `~/.cliproxyapi/config.yaml` | `~/.cliproxyapi/config.yaml` | `%USERPROFILE%\.cliproxyapi\config.yaml` |
 | **WebUI Dashboard** | `/var/lib/cliproxyapi/static/` | `~/.cliproxyapi/static/` | `~/.cliproxyapi/static/` | `%USERPROFILE%\.cliproxyapi\static\` |
 | **OAuth Credentials** | `/var/lib/cliproxyapi/auths/` | `~/.cliproxyapi/auths/` | `~/.cliproxyapi/auths/` | `%USERPROFILE%\.cliproxyapi\auths\` |
-| **Service Logs** | Systemd Journal / `service.log` | `~/.cliproxyapi/logs/service.log` | `~/.cliproxyapi/logs/service.log` | `%USERPROFILE%\.cliproxyapi\logs\service.log` |
+| **Service Logs** | `journalctl -u cliproxyapi` or `/var/log/cliproxyapi/service.log` | `journalctl --user -u cliproxyapi` or `~/.cliproxyapi/logs/service.log` | `~/.cliproxyapi/logs/service.log` | `%USERPROFILE%\.cliproxyapi\logs\service.log` |
 
 ---
 
 ## 🌐 WebUI Dashboard & Credentials
 
 * **WebUI URL:** `http://127.0.0.1:8317/management.html`
-* **Default Secret (Password):** `admin123` *(Preserved automatically if customized)*
-* **Default Port:** `8317`
+* **Default Secret (Password):** `admin123` *(change it after the first login; existing secrets are always preserved)*
+* **Default Port:** `8317` *(a custom `port` in your config is respected by the CLI and summary output)*
+
+> [!IMPORTANT]
+> CLIProxyAPI hashes the plaintext `secret-key` on first start, so `config.yaml` will show a bcrypt hash afterwards. Your password is still the value you set (default `admin123`).
 * **Pre-configured Enhancements:**
   - **Antigravity Sensor Protection:** Pre-filters sensitive words (`Nous`, `Research`) to avoid false HTTP 429 rate limit triggers.
   - **Hermes Tool Calling:** Pre-configured model alias mapping for `gemini-3.8-flash-high` (`gemini-3.8-flash` and `gemini-3.8-flash-customtools`).
